@@ -9,14 +9,38 @@ if (USE_SQLITE) {
 }
 
 // MongoDB connection
+const sanitizeUriForLog = (uri) => {
+  try {
+    const u = new URL(uri);
+    if (u.password) u.password = '***';
+    return u.toString();
+  } catch {
+    return '[invalid uri]';
+  }
+};
+
 const connectDB = async () => {
   try {
     const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/ibarize-media';
-    const conn = await mongoose.connect(MONGO_URI);
+    console.log('Connecting to MongoDB:', sanitizeUriForLog(MONGO_URI));
+
+    mongoose.connection.on('error', (err) => {
+      console.error('Mongoose connection error:', err.message);
+    });
+    mongoose.connection.on('disconnected', () => {
+      console.warn('Mongoose disconnected');
+    });
+
+    const conn = await mongoose.connect(MONGO_URI, {
+      serverSelectionTimeoutMS: 15000,
+      // socketTimeoutMS: 45000, // uncomment if needed
+      // family: 4, // force IPv4 if DNS/IPv6 issues
+    });
     console.log(`MongoDB Connected: ${conn.connection.host}`);
+    return conn;
   } catch (error) {
     console.error('Error connecting to MongoDB:', error.message);
-    process.exit(1);
+    throw error;
   }
 };
 
