@@ -14,18 +14,21 @@ const User = require('./models/User');
 const app = express();
 
 // CORS configuration (allow specific origins via env)
-const allowedOrigins = (process.env.CORS_ORIGINS || '').split(',').map(o => o.trim()).filter(Boolean);
+const normalizeOrigin = (u) => (u ? u.replace(/\/$/, '') : u);
+const allowedOriginsRaw = process.env.CORS_ORIGINS || 'http://localhost:8080,http://localhost:3000';
+const allowedOrigins = allowedOriginsRaw.split(',').map(o => normalizeOrigin(o.trim())).filter(Boolean);
 const corsOptions = {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true); // allow non-browser tools
-    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+    const o = normalizeOrigin(origin);
+    if (allowedOrigins.length === 0 || allowedOrigins.includes(o)) {
       return callback(null, true);
     }
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 };
 
 // Middleware
@@ -264,6 +267,40 @@ app.get('/api/files/:gridId', async (req, res) => {
   }
 });
 
+// Analytics API
+app.get('/api/analytics', async (req, res) => {
+  try {
+    const totalProperties = await Property.countDocuments();
+
+    // Compute average price; fallback to 0 if none
+    const avgAgg = await Property.aggregate([
+      { $group: { _id: null, avgPrice: { $avg: '$price' } } }
+    ]);
+    const averagePrice = avgAgg?.[0]?.avgPrice ? Math.round(avgAgg[0].avgPrice) : 0;
+
+    // These metrics are not currently tracked; return sensible defaults
+    const totalViews = 0;
+    const totalLeads = 0;
+
+    // Extra fields used by Dashboard UI
+    const totalContacts = 0;
+    const conversionRate = '0%';
+    const avgResponseTime = '0h';
+
+    res.json({
+      totalProperties,
+      totalViews,
+      totalLeads,
+      averagePrice,
+      totalContacts,
+      conversionRate,
+      avgResponseTime,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // User settings API
 app.get('/api/user', async (req, res) => {
   try {
@@ -297,6 +334,33 @@ app.put('/api/user', async (req, res) => {
       { upsert: true }
     );
     res.json({ message: 'User settings updated successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Settings API (alias of updating the single user record)
+app.put('/api/settings', async (req, res) => {
+  try {
+    const { name, email, phone, location, bio, theme, language, currency, notifications } = req.body;
+
+    await User.findOneAndUpdate(
+      { id: '1' },
+      {
+        name,
+        email,
+        phone,
+        location,
+        bio,
+        theme: theme || 'light',
+        language: language || 'en',
+        currency: currency || 'rwf',
+        notifications: notifications || {},
+      },
+      { upsert: true }
+    );
+
+    res.json({ message: 'Settings updated successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
