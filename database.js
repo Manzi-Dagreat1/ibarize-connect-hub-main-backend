@@ -1,12 +1,18 @@
 const mongoose = require('mongoose');
-const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+
+// Feature flag: enable SQLite only if explicitly requested
+const USE_SQLITE = process.env.USE_SQLITE === 'true';
+let sqlite3, db, dbPath;
+if (USE_SQLITE) {
+  sqlite3 = require('sqlite3').verbose();
+}
 
 // MongoDB connection
 const connectDB = async () => {
   try {
-    // const conn = await mongoose.connect('mongodb://localhost:27017/ibarize-media');
-    const conn = await mongoose.connect('mongodb+srv://dickson:Dickson12@cluster0.v6ds6mf.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0');
+    const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/ibarize-media';
+    const conn = await mongoose.connect(MONGO_URI);
     console.log(`MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
     console.error('Error connecting to MongoDB:', error.message);
@@ -14,18 +20,41 @@ const connectDB = async () => {
   }
 };
 
-// SQLite setup for properties
-const dbPath = path.join(__dirname, 'ibarize.db');
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('Error opening database:', err.message);
-  } else {
-    console.log('Connected to SQLite database.');
+// Helper to get a GridFS bucket
+let GridFSBucket;
+try {
+  GridFSBucket = require('mongodb').GridFSBucket;
+} catch (_) {}
+
+const getGridFSBucket = () => {
+  if (!mongoose.connection || !mongoose.connection.db) {
+    throw new Error('MongoDB not connected yet');
   }
-});
+  if (!GridFSBucket) {
+    throw new Error('mongodb driver not available');
+  }
+  // Use default bucket name 'fs'
+  return new GridFSBucket(mongoose.connection.db);
+};
+
+// SQLite setup for properties
+if (USE_SQLITE) {
+  dbPath = process.env.SQLITE_PATH || path.join(__dirname, 'ibarize.db');
+  db = new sqlite3.Database(dbPath, (err) => {
+    if (err) {
+      console.error('Error opening database:', err.message);
+    } else {
+      console.log('Connected to SQLite database.');
+    }
+  });
+}
 
 // Initialize tables
 const initDatabase = () => {
+  if (!USE_SQLITE) {
+    console.log('SQLite disabled (USE_SQLITE is not true) — skipping SQLite initialization.');
+    return;
+  }
   // Properties table
   db.run(`
     CREATE TABLE IF NOT EXISTS properties (
@@ -89,11 +118,12 @@ const initDatabase = () => {
     }
   });
 
-  console.log('Database initialized successfully.');
+  console.log('SQLite database initialized successfully.');
 };
 
 // Helper functions
 const runQuery = (query, params = []) => {
+  if (!USE_SQLITE) throw new Error('SQLite disabled');
   return new Promise((resolve, reject) => {
     db.run(query, params, function(err) {
       if (err) {
@@ -106,6 +136,7 @@ const runQuery = (query, params = []) => {
 };
 
 const getQuery = (query, params = []) => {
+  if (!USE_SQLITE) throw new Error('SQLite disabled');
   return new Promise((resolve, reject) => {
     db.get(query, params, (err, row) => {
       if (err) {
@@ -118,6 +149,7 @@ const getQuery = (query, params = []) => {
 };
 
 const allQuery = (query, params = []) => {
+  if (!USE_SQLITE) throw new Error('SQLite disabled');
   return new Promise((resolve, reject) => {
     db.all(query, params, (err, rows) => {
       if (err) {
@@ -134,5 +166,6 @@ module.exports = {
   initDatabase,
   runQuery,
   getQuery,
-  allQuery
+  allQuery,
+  getGridFSBucket,
 };

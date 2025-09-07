@@ -20,6 +20,11 @@ const mediaSchema = new mongoose.Schema({
   uploadedAt: {
     type: Date,
     default: Date.now
+  },
+  gridFsId: {
+    type: mongoose.Schema.Types.ObjectId,
+    required: true,
+    index: true
   }
 });
 
