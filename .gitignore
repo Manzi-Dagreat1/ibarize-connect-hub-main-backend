@@ -1,1 +1,23 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Local data and uploads
+uploads/
+ibarize.db
+*.sqlite
+*.sqlite3
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS/Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
