@@ -6,16 +6,15 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
-const { connectDB, getGridFSBucket } = require('./database');
-const Media = require('./models/Media');
-const Property = require('./models/Property');
-const User = require('./models/User');
+const { connectDB, getGridFSBucket, getDatabase } = require('./database');
+const { ObjectId } = require('mongodb');
 
 const app = express();
 
 // CORS configuration (allow specific origins via env)
 const normalizeOrigin = (u) => (u ? u.replace(/\/$/, '') : u);
-const allowedOriginsRaw = process.env.CORS_ORIGINS || 'http://localhost:8080,http://localhost:3000';
+const allowedOriginsRaw = process.env.CORS_ORIGINS;
+// const allowedOriginsRaw = process.env.CORS_ORIGINS || 'http://localhost:8080,http://localhost:3000';
 const allowedOrigins = allowedOriginsRaw.split(',').map(o => normalizeOrigin(o.trim())).filter(Boolean);
 const corsOptions = {
   origin: (origin, callback) => {
@@ -86,7 +85,8 @@ app.get('/api/health', (req, res) => {
 // Properties API
 app.get('/api/properties', async (req, res) => {
   try {
-    const properties = await Property.find().sort({ createdAt: -1 });
+    const db = getDatabase();
+    const properties = await db.collection('properties').find().sort({ createdAt: -1 }).toArray();
     res.json(properties);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -95,9 +95,12 @@ app.get('/api/properties', async (req, res) => {
 
 app.get('/api/properties/:id', async (req, res) => {
   try {
-    let property = await Property.findOne({ id: req.params.id });
+    const db = getDatabase();
+    let property = await db.collection('properties').findOne({ id: req.params.id });
     if (!property) {
-      try { property = await Property.findById(req.params.id); } catch (e) {}
+      try { 
+        property = await db.collection('properties').findOne({ _id: new ObjectId(req.params.id) }); 
+      } catch (e) {}
     }
     if (!property) return res.status(404).json({ error: 'Property not found' });
     res.json(property);
@@ -116,8 +119,9 @@ app.post('/api/properties', async (req, res) => {
     } = req.body;
 
     const id = require('uuid').v4();
+    const db = getDatabase();
 
-    const doc = await Property.create({
+    const propertyDoc = {
       id,
       title,
       price,
@@ -142,9 +146,13 @@ app.post('/api/properties', async (req, res) => {
       balcony: !!balcony,
       securitySystem: !!securitySystem,
       nearbyFacilities: nearbyFacilities || [],
-    });
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
 
-    res.status(201).json({ id: doc.id, message: 'Property created successfully' });
+    const result = await db.collection('properties').insertOne(propertyDoc);
+
+    res.status(201).json({ id: id, message: 'Property created successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -159,32 +167,37 @@ app.put('/api/properties/:id', async (req, res) => {
       nearbyFacilities
     } = req.body;
 
-    await Property.findOneAndUpdate(
+    const db = getDatabase();
+    
+    await db.collection('properties').updateOne(
       { id: req.params.id },
       {
-        title,
-        price,
-        location,
-        bedrooms: bedrooms || 1,
-        bathrooms: bathrooms || 1,
-        size,
-        type: type || 'apartment',
-        description,
-        images: images || [],
-        videos: videos || [],
-        amenities: amenities || [],
-        featured: !!featured,
-        status: status || 'active',
-        virtualTour,
-        yearBuilt,
-        parking: parking || 0,
-        floor: floor || 1,
-        furnished: !!furnished,
-        petFriendly: !!petFriendly,
-        garden: !!garden,
-        balcony: !!balcony,
-        securitySystem: !!securitySystem,
-        nearbyFacilities: nearbyFacilities || [],
+        $set: {
+          title,
+          price,
+          location,
+          bedrooms: bedrooms || 1,
+          bathrooms: bathrooms || 1,
+          size,
+          type: type || 'apartment',
+          description,
+          images: images || [],
+          videos: videos || [],
+          amenities: amenities || [],
+          featured: !!featured,
+          status: status || 'active',
+          virtualTour,
+          yearBuilt,
+          parking: parking || 0,
+          floor: floor || 1,
+          furnished: !!furnished,
+          petFriendly: !!petFriendly,
+          garden: !!garden,
+          balcony: !!balcony,
+          securitySystem: !!securitySystem,
+          nearbyFacilities: nearbyFacilities || [],
+          updatedAt: new Date(),
+        }
       }
     );
 
@@ -196,7 +209,8 @@ app.put('/api/properties/:id', async (req, res) => {
 
 app.delete('/api/properties/:id', async (req, res) => {
   try {
-    await Property.deleteOne({ id: req.params.id });
+    const db = getDatabase();
+    await db.collection('properties').deleteOne({ id: req.params.id });
     res.json({ message: 'Property deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -219,23 +233,25 @@ app.post('/api/upload', uploadWithLimits.array('files'), async (req, res) => {
         uploadStream.end(file.buffer);
       });
 
-      const media = new Media({
+      const db = getDatabase();
+      const mediaDoc = {
         filename: originalName,
         url: `/api/files/${gridId.toString()}`,
         mimetype: file.mimetype,
         size: file.size,
-        gridFsId: gridId
-      });
+        gridFsId: gridId,
+        uploadedAt: new Date()
+      };
 
-      await media.save();
+      const result = await db.collection('media').insertOne(mediaDoc);
 
       uploadedFiles.push({
-        id: media._id,
+        id: result.insertedId,
         filename: originalName,
         url: `/api/files/${gridId.toString()}`,
         mimetype: file.mimetype,
         size: file.size,
-        uploadedAt: media.uploadedAt
+        uploadedAt: mediaDoc.uploadedAt
       });
     }
 
@@ -251,7 +267,8 @@ app.get('/api/files/:gridId', async (req, res) => {
     const gridId = req.params.gridId;
     const bucket = getGridFSBucket();
 
-    const mediaDoc = await Media.findOne({ gridFsId: gridId }) || null;
+    const db = getDatabase();
+    const mediaDoc = await db.collection('media').findOne({ gridFsId: gridId }) || null;
     if (mediaDoc?.mimetype) {
       res.setHeader('Content-Type', mediaDoc.mimetype);
     }
@@ -270,12 +287,13 @@ app.get('/api/files/:gridId', async (req, res) => {
 // Analytics API
 app.get('/api/analytics', async (req, res) => {
   try {
-    const totalProperties = await Property.countDocuments();
+    const db = getDatabase();
+    const totalProperties = await db.collection('properties').countDocuments();
 
     // Compute average price; fallback to 0 if none
-    const avgAgg = await Property.aggregate([
+    const avgAgg = await db.collection('properties').aggregate([
       { $group: { _id: null, avgPrice: { $avg: '$price' } } }
-    ]);
+    ]).toArray();
     const averagePrice = avgAgg?.[0]?.avgPrice ? Math.round(avgAgg[0].avgPrice) : 0;
 
     // These metrics are not currently tracked; return sensible defaults
@@ -304,9 +322,25 @@ app.get('/api/analytics', async (req, res) => {
 // User settings API
 app.get('/api/user', async (req, res) => {
   try {
-    let user = await User.findOne({ id: '1' });
+    const db = getDatabase();
+    let user = await db.collection('users').findOne({ id: '1' });
     if (!user) {
-      user = await User.create({ id: '1' });
+      const newUser = {
+        id: '1',
+        name: 'IBARIZE REAL ESTATE',
+        email: 'broker@ibarize.com',
+        phone: '+250 780 429 006',
+        location: 'KICUKIRO CENTER - Behind Bank BPR',
+        bio: '',
+        theme: 'light',
+        language: 'en',
+        currency: 'rwf',
+        notifications: {},
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+      await db.collection('users').insertOne(newUser);
+      user = newUser;
     }
     res.json(user);
   } catch (error) {
@@ -318,18 +352,22 @@ app.put('/api/user', async (req, res) => {
   try {
     const { name, email, phone, location, bio, theme, language, currency, notifications } = req.body;
 
-    await User.findOneAndUpdate(
+    const db = getDatabase();
+    await db.collection('users').updateOne(
       { id: '1' },
       {
-        name,
-        email,
-        phone,
-        location,
-        bio,
-        theme: theme || 'light',
-        language: language || 'en',
-        currency: currency || 'rwf',
-        notifications: notifications || {},
+        $set: {
+          name,
+          email,
+          phone,
+          location,
+          bio,
+          theme: theme || 'light',
+          language: language || 'en',
+          currency: currency || 'rwf',
+          notifications: notifications || {},
+          updatedAt: new Date(),
+        }
       },
       { upsert: true }
     );
@@ -344,18 +382,22 @@ app.put('/api/settings', async (req, res) => {
   try {
     const { name, email, phone, location, bio, theme, language, currency, notifications } = req.body;
 
-    await User.findOneAndUpdate(
+    const db = getDatabase();
+    await db.collection('users').updateOne(
       { id: '1' },
       {
-        name,
-        email,
-        phone,
-        location,
-        bio,
-        theme: theme || 'light',
-        language: language || 'en',
-        currency: currency || 'rwf',
-        notifications: notifications || {},
+        $set: {
+          name,
+          email,
+          phone,
+          location,
+          bio,
+          theme: theme || 'light',
+          language: language || 'en',
+          currency: currency || 'rwf',
+          notifications: notifications || {},
+          updatedAt: new Date(),
+        }
       },
       { upsert: true }
     );

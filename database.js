@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+const { MongoClient, ServerApiVersion, GridFSBucket } = require('mongodb');
 const path = require('path');
 
 // Feature flag: enable SQLite only if explicitly requested
@@ -19,46 +19,66 @@ const sanitizeUriForLog = (uri) => {
   }
 };
 
+// Global MongoDB client instance
+let mongoClient = null;
+let database = null;
+
 const connectDB = async () => {
   try {
-    const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/ibarize-media';
+    // Use the new MongoDB connection string
+    const MONGO_URI = process.env.MONGODB_URI || "mongodb+srv://manzinshutiigor_db_user:p31edgG6eV6fBgiE@ibarize.nep9l04.mongodb.net/ibarize_connect_hub?retryWrites=true&w=majority&appName=ibarize";
     console.log('Connecting to MongoDB:', sanitizeUriForLog(MONGO_URI));
 
-    mongoose.connection.on('error', (err) => {
-      console.error('Mongoose connection error:', err.message);
-    });
-    mongoose.connection.on('disconnected', () => {
-      console.warn('Mongoose disconnected');
+    // Create MongoClient with Stable API version
+    mongoClient = new MongoClient(MONGO_URI, {
+      serverApi: {
+        version: ServerApiVersion.v1,
+        strict: true,
+        deprecationErrors: true,
+      },
+      maxPoolSize: 10,
+      serverSelectionTimeoutMS: 30000,
+      socketTimeoutMS: 45000,
     });
 
-    const conn = await mongoose.connect(MONGO_URI, {
-      serverSelectionTimeoutMS: 15000,
-      // socketTimeoutMS: 45000, // uncomment if needed
-      // family: 4, // force IPv4 if DNS/IPv6 issues
-    });
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
-    return conn;
+    // Connect the client to the server
+    await mongoClient.connect();
+    
+    // Get database instance
+    database = mongoClient.db('ibarize_connect_hub');
+    
+    // Send a ping to confirm a successful connection
+    await mongoClient.db("admin").command({ ping: 1 });
+    console.log("✅ Pinged your deployment. You successfully connected to MongoDB!");
+
+    return mongoClient;
   } catch (error) {
     console.error('Error connecting to MongoDB:', error.message);
+    console.error('Full error:', error);
     throw error;
   }
 };
 
-// Helper to get a GridFS bucket
-let GridFSBucket;
-try {
-  GridFSBucket = require('mongodb').GridFSBucket;
-} catch (_) {}
+// Get the native MongoDB client
+const getMongoClient = () => {
+  if (!mongoClient) {
+    throw new Error('MongoDB client not initialized. Call connectDB() first.');
+  }
+  return mongoClient;
+};
 
-const getGridFSBucket = () => {
-  if (!mongoose.connection || !mongoose.connection.db) {
-    throw new Error('MongoDB not connected yet');
+// Get the database instance
+const getDatabase = (dbName = 'ibarize_connect_hub') => {
+  if (!mongoClient) {
+    throw new Error('MongoDB client not initialized. Call connectDB() first.');
   }
-  if (!GridFSBucket) {
-    throw new Error('mongodb driver not available');
-  }
-  // Use default bucket name 'fs'
-  return new GridFSBucket(mongoose.connection.db);
+  return mongoClient.db(dbName);
+};
+
+// Helper to get a GridFS bucket
+const getGridFSBucket = (dbName = 'ibarize_connect_hub') => {
+  const db = getDatabase(dbName);
+  return new GridFSBucket(db);
 };
 
 // SQLite setup for properties
@@ -192,4 +212,6 @@ module.exports = {
   getQuery,
   allQuery,
   getGridFSBucket,
+  getMongoClient,
+  getDatabase,
 };
