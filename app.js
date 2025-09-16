@@ -51,7 +51,9 @@ const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   try { fs.mkdirSync(uploadsDir, { recursive: true }); } catch (_) {}
 }
-
+app.get('/',(req,res)=>{
+    res.send('Hello World!');
+})
 // Static route for uploads kept for compatibility (no-op when using GridFS)
 app.use('/uploads', express.static(uploadsDir));
 
